@@ -99,7 +99,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
             )
         },
     )
-    private val interactionsAPI = InteractionsAPI(client = client, keyRoulette = keyRoulette)
+    private val interactionsAPI = InteractionsAPI(client = client)
 
     override suspend fun getQuota(providerSetting: ProviderSetting.Google): ProviderQuota? =
         client.runQuotaQuery(providerSetting) {
@@ -123,6 +123,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
         providerSetting: ProviderSetting.Google,
         request: Request,
         sessionId: String? = null,
+        selectedApiKey: String? = null,
     ): Request {
         return if (providerSetting.vertexAI && providerSetting.useServiceAccount) {
             val accessToken = serviceAccountTokenProvider.fetchAccessToken(
@@ -133,7 +134,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                 .addHeader("Authorization", "Bearer $accessToken")
                 .build()
         } else {
-            val key = keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString(), sessionId)
+            val key = selectedApiKey ?: keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString(), sessionId)
             if (providerSetting.vertexAI) {
                 request.newBuilder()
                     .url(request.url.newBuilder().addQueryParameter("key", key).build())
@@ -234,6 +235,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                 .configureReferHeaders(providerSetting.baseUrl)
                 .build(),
             sessionId = params.sessionId,
+            selectedApiKey = providerSetting.apiKey,
         )
 
         val response = client.newCall(request).await()
@@ -298,6 +300,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                 .configureReferHeaders(providerSetting.baseUrl)
                 .build(),
             sessionId = params.sessionId,
+            selectedApiKey = providerSetting.apiKey,
         )
 
         Log.d(TAG, "Starting Gemini stream (${messages.size} messages)")

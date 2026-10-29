@@ -53,6 +53,7 @@ class GoogleVideoUploadTest {
                 }
                 req.url.encodedPath.contains("/files/") -> {
                     code = cacheStatus
+                    if (state == "PROCESSING") state = "ACTIVE"
                     body = resource()
                 }
                 req.url.host == "storage.googleapis.com" -> {
@@ -102,6 +103,14 @@ class GoogleVideoUploadTest {
             assertTrue(prepared.all { (it.parts.single() as UIMessagePart.Video).url.startsWith("https://") })
         }
         assertEquals(1, seen.count { it.header("X-Goog-Upload-Command") == "start" })
+    }
+
+    @Test fun `processing video is polled until ACTIVE before generation`() = runBlocking {
+        state = "PROCESSING"
+        uploader().withPreparedVideos(setting, listOf(message(INLINE_VIDEO_LIMIT + 1))) {
+            assertEquals("ACTIVE", state)
+            assertTrue(seen.any { request -> request.method == "GET" })
+        }
     }
 
     @Test fun `cache survives uploader recreation and is validated before reuse`() = runBlocking {
@@ -178,6 +187,18 @@ class GoogleVideoUploadTest {
         assertEquals(72L * 1024 * 1024, uploadedBytes)
         assertEquals(listOf("POST", "DELETE"), seen.map { it.method })
         assertTrue(seen.all { it.header("Authorization") == "Bearer test-access-token" })
+    }
+
+    @Test fun `Vertex removes temporary upload when generation is cancelled`() = runBlocking {
+        val vertex = setting.copy(vertexAI = true, useServiceAccount = true, videoStorageBucket = "test-bucket")
+        try {
+            uploader().withPreparedVideos(vertex, listOf(message(INLINE_VIDEO_LIMIT + 1))) {
+                kotlinx.coroutines.withTimeout(10) { kotlinx.coroutines.delay(10_000) }
+            }
+            fail("Must be cancelled")
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            assertEquals(listOf("POST", "DELETE"), seen.map { it.method })
+        }
     }
 
     @Test fun `Interactions sends uploaded videos as URI without Base64`() {

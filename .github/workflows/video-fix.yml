@@ -27,6 +27,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: web-ui/pnpm-lock.yaml
+      - name: Install web UI dependencies
+        working-directory: web-ui
+        run: pnpm install --frozen-lockfile
       - uses: gradle/actions/setup-gradle@v4
       - uses: ./.github/actions/setup-android-native
       - name: Use official Gradle distribution
@@ -34,7 +45,7 @@ jobs:
       - name: Test AI module
         run: ./gradlew :ai:testDebugUnitTest -Prikkahub.forkBuild=true --stacktrace
       - name: Build independent debug APK
-        run: ./gradlew :app:assembleDebug -Prikkahub.forkBuild=true -x :web:buildWebUi --stacktrace
+        run: ./gradlew :app:assembleDebug -Prikkahub.forkBuild=true --stacktrace
       - name: Upload APK and test results
         if: always()
         uses: actions/upload-artifact@v4
