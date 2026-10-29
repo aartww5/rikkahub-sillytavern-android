@@ -197,6 +197,7 @@ private val SENSITIVE_FIELDS = setOf(
     "accesstoken",
     "refreshtoken",
     "token",
+    "uploadid",
     "cookie",
     "setcookie",
 )

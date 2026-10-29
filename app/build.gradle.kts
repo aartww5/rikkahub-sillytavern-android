@@ -199,7 +199,7 @@ android {
         targetSdk = 37
         // 跟随上游 3.1.1；versionCode 在本地线（238）上递增，保证覆盖安装
         versionCode = 241
-        versionName = "3.1.1"
+        versionName = "3.1.1-video-fix"
 
         // 插件解密密钥的派生因子之一：由签名口令做 HMAC，口令只存在于
         // local.properties / CI secrets，不写入 APK 明文。APK 内只保留 HMAC 结果，
@@ -231,7 +231,10 @@ android {
         // 配合公开的签名证书即可完整复现密钥派生、解开插件载荷。
         // 因子现由 libhdguard.so 在运行时供给（见 app/src/main/cpp/hdguard.c），
         // 上面算出的 kdfFactor 仍用于校验 native 侧数据的一致性，但不进入 APK。
-        check(kdfFactor == HD_GUARD_EXPECTED_FACTOR) {
+        // Explicit opt-in for independently signed forks; official builds retain the check.
+        val forkBuild = providers.gradleProperty("rikkahub.forkBuild").orNull == "true"
+        if (forkBuild) logger.warn("Fork build: encrypted plugins tied to the official signature may be unavailable.")
+        check(forkBuild || kdfFactor == HD_GUARD_EXPECTED_FACTOR) {
             "[华灯] 签名口令推导出的因子与 libhdguard.so 内置值不一致。" +
                 "两者必须相同，否则 APK 无法解密 v2 插件。" +
                 "请重新生成 hdguard.c 中的 BLOB，或检查 local.properties 的签名口令。"

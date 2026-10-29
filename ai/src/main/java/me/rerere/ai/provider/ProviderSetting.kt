@@ -153,6 +153,7 @@ sealed class ProviderSetting {
         var location: String = "us-central1", // only for vertex AI service account
         var projectId: String = "", // only for vertex AI service account
         var useInteractionsApi: Boolean = false, // ignored when vertex AI is enabled
+        var videoStorageBucket: String = "", // optional GCS bucket for large Vertex videos
     ) : ApiKey() {
         override fun withQuotaQuery(query: QuotaQuery): ApiKey = copy(quotaQuery = query)
 

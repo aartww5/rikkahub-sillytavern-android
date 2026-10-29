@@ -107,7 +107,7 @@ internal class InteractionsAPI(
         val requestBody = buildRequestBody(messages, params, stream = true)
         val request = buildRequest(providerSetting, params, requestBody)
 
-        Log.i(TAG, "streamText: ${json.encodeToString(requestBody)}")
+        Log.d(TAG, "Starting Interactions stream (${messages.size} messages)")
 
         val decoder = InteractionsStreamDecoder(fallbackModel = params.model.modelId)
 
@@ -408,11 +408,17 @@ internal class InteractionsAPI(
             }
         }
 
-        is UIMessagePart.Video -> encodeBase64(false).getOrNull()?.let { base64Data ->
-            buildJsonObject {
-                put("type", "video")
-                put("mime_type", "video/mp4")
-                put("data", base64Data)
+        is UIMessagePart.Video -> buildJsonObject {
+            put("type", "video")
+            put("mime_type", googleVideoMimeType())
+            if (localVideoFile(url) != null) {
+                check(localVideoFile(url)!!.length() <= INLINE_VIDEO_LIMIT) {
+                    "Large videos must be uploaded before building the request."
+                }
+                put("data", encodeBase64(false).getOrThrow())
+            } else {
+                require(url.startsWith("https://") || url.startsWith("gs://")) { "Unsupported video URI." }
+                put("uri", url)
             }
         }
 

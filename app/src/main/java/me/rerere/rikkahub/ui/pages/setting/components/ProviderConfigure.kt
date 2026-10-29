@@ -676,6 +676,21 @@ private fun ProviderConfigureGoogle(
                 value = provider.projectId,
                 onValueChange = { onEdit(provider.copy(projectId = it.trim())) },
             )
+            formItem(headlineContent = { Text("大视频 GCS 存储桶（可选）") }) {
+                OutlinedTextField(
+                    value = provider.videoStorageBucket,
+                    onValueChange = { onEdit(provider.copy(videoStorageBucket = it.trim())) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("my-video-bucket") },
+                    supportingText = {
+                        Text("超过 20 MiB 时上传到此桶，生成结束后删除临时对象。需开通 GCS，" +
+                            "并授予服务账号对象读写与删除权限；存储和流量可能计费。" +
+                            "建议为 rikkahub-video/ 前缀设置 1 天自动删除规则。")
+                    },
+                )
+            }
+
         }
     }
 }

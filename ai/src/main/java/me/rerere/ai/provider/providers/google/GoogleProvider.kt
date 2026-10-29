@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.channels.onFailure
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
@@ -88,6 +89,16 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
     private val serviceAccountTokenProvider by lazy {
         ServiceAccountTokenProvider(client)
     }
+    private val videoUpload = GoogleVideoUpload(
+        client = client,
+        cacheDir = context?.cacheDir?.let { java.io.File(it, "gemini-video-files") },
+        accessToken = { setting ->
+            serviceAccountTokenProvider.fetchAccessToken(
+                setting.serviceAccountEmail.trim(),
+                StringEscapeUtils.unescapeJson(setting.privateKey.trim()),
+            )
+        },
+    )
     private val interactionsAPI = InteractionsAPI(client = client, keyRoulette = keyRoulette)
 
     override suspend fun getQuota(providerSetting: ProviderSetting.Google): ProviderQuota? =
@@ -175,7 +186,23 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
             }
         }
 
+    private fun pinApiKey(setting: ProviderSetting.Google, params: TextGenerationParams): ProviderSetting.Google =
+        if (setting.vertexAI && setting.useServiceAccount) setting else setting.copy(
+            apiKey = keyRoulette.next(setting.apiKey, setting.id.toString(), params.sessionId),
+        )
+
     override suspend fun generateText(
+        providerSetting: ProviderSetting.Google,
+        messages: List<UIMessage>,
+        params: TextGenerationParams,
+    ): TextGenerationResult = withContext(Dispatchers.IO) {
+        val setting = pinApiKey(providerSetting, params)
+        videoUpload.withPreparedVideos(setting, messages) { prepared ->
+            generatePreparedText(setting, prepared, params)
+        }
+    }
+
+    private suspend fun generatePreparedText(
         providerSetting: ProviderSetting.Google,
         messages: List<UIMessage>,
         params: TextGenerationParams,
@@ -232,11 +259,16 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
         providerSetting: ProviderSetting.Google,
         messages: List<UIMessage>,
         params: TextGenerationParams,
-    ): Flow<StreamChunk> = if (providerSetting.usesInteractionsApi()) {
-        interactionsAPI.streamText(providerSetting, messages, params)
-    } else {
-        streamGenerateContent(providerSetting, messages, params)
-    }
+    ): Flow<StreamChunk> = flow {
+        val setting = pinApiKey(providerSetting, params)
+        videoUpload.withPreparedVideos(setting, messages) { prepared ->
+            emitAll(if (setting.usesInteractionsApi()) {
+                interactionsAPI.streamText(setting, prepared, params)
+            } else {
+                streamGenerateContent(setting, prepared, params)
+            })
+        }
+    }.flowOn(Dispatchers.IO)
 
     private fun streamGenerateContent(
         providerSetting: ProviderSetting.Google,
@@ -268,7 +300,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
             sessionId = params.sessionId,
         )
 
-        Log.i(TAG, "streamText: ${json.encodeToString(requestBody)}")
+        Log.d(TAG, "Starting Gemini stream (${messages.size} messages)")
 
         val responseId = Uuid.random().toString()
         val decoder = GoogleStreamDecoder(responseId, params.model.modelId)
@@ -872,16 +904,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
             }
         }
 
-        is UIMessagePart.Video -> {
-            encodeBase64(false).getOrNull()?.let { base64Data ->
-                buildJsonObject {
-                    put("inlineData", buildJsonObject {
-                        put("mimeType", "video/mp4")
-                        put("data", base64Data)
-                    })
-                }
-            }
-        }
+        is UIMessagePart.Video -> toGoogleVideoPart()
 
         is UIMessagePart.Audio -> {
             encodeBase64(false).getOrNull()?.let { base64Data ->
@@ -921,7 +944,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                 val mediaGoogleParts = output
                     .filter { it !is UIMessagePart.Text }
                     .mapNotNull { it.toGooglePart() }
-                    .filter { it.containsKey("inlineData") } 
+                    .filter { it.containsKey("inlineData") || it.containsKey("fileData") }
 
                 // 3. 构建给模型看的结构化 response 节点
                 put("response", buildJsonObject {
@@ -950,11 +973,12 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                     putJsonArray("parts") {
                         mediaGoogleParts.forEachIndexed { index, googlePart ->
                             val refName = "media_ref_$index"
-                            val inlineData = googlePart["inlineData"]!!.jsonObject
+                            val mediaKey = if (googlePart.containsKey("fileData")) "fileData" else "inlineData"
+                            val inlineData = googlePart[mediaKey]!!.jsonObject
 
                             add(buildJsonObject {
                                 // 重新组装 inlineData，并在内部注入 displayName
-                                put("inlineData", buildJsonObject {
+                                put(mediaKey, buildJsonObject {
                                     // 复制原有的 mimeType 和 data
                                     inlineData.forEach { (k, v) -> put(k, v) }
                                     // 添加能够让 $ref 认出它的唯一名称
@@ -963,7 +987,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                                 
                                 // 保留可能存在的其他字段
                                 googlePart.forEach { (k, v) ->
-                                    if (k != "inlineData") put(k, v)
+                                    if (k != mediaKey) put(k, v)
                                 }
                             })
                         }
